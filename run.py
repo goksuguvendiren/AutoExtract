@@ -1,79 +1,111 @@
 from os import listdir
 from os.path import isfile, join, isdir
-from threading import Timer
 import subprocess
+import sys
 import os
-import ntpath
-import time
-import signal
+import fnmatch
+from pathlib import Path
+import json
 
-def input_file_names(full_input_path):
-	print full_input_path
-	return [join(full_input_path, file) for file in listdir(full_input_path) if isfile(join(full_input_path, file))]
+from colorama import Fore, Back, Style
 
-def execute_student(student_folder, input_files):
-	build_path = join(student_folder, "build")
-	if not os.path.exists(build_path):
-		os.mkdir(build_path)
+path = os.getcwd()
 
-	output_path = join(build_path, "outputs")
-	if not os.path.exists(output_path):
-		os.mkdir(output_path)
+def find(pattern, path):
+    result = []
+    for root, dirs, files in os.walk(path):
+        for name in files:
+            if fnmatch.fnmatch(name, pattern):
+                result.append(os.path.join(root, name))
+    return result
 
-	executable_path = join(student_folder, "prog2")
 
-	if not os.path.exists(executable_path):
-		print student_folder + " does not have the executable prog2"
+def run_submission(source_path, compiled_path):
+	# go to the subdirectory of the submission
+	os.chdir(source_path)
+	print(source_path)
+
+	submission_path = source_path.parent
+	if str(source_path.parent).endswith("compiled"):
+		submission_path = source_path
+	buildpath = source_path / "goksubuild"
+
+	print ("The source code is in: " + str(source_path))
+	print ("Compiled the code into: " + str(buildpath))
+	print ("Whole submission is in: " + str(submission_path))
+	# if ~buildpath.resolve().exists():
+	# # 	buildpath.mkdir(mode=0o777, parents=True, exist_ok=True)
+	# 	print("The build folder: goksubuild doesn't exist, continuing!")
+	# 	return 
+
+	os.chdir(buildpath)
+	
+	# run the submission
+	cmake_retcode = subprocess.call(["ls"])
+
+	executable = find("Rasterizer", buildpath)
+	if (len(executable) == 0):
+		print ("Executable doesn't exist in: " + str(buildpath))
 		return
 
-	for basic in input_files:
-		print basic
-		_, input_name = ntpath.split(basic)
-		output_file = join(output_path, input_name)
+	retcode = subprocess.call(["./Rasterizer", "-r", "0", "output0.png"])
+	retcode = subprocess.call(["./Rasterizer", "-r", "10", "output10.png"])
+	retcode = subprocess.call(["./Rasterizer", "-r", "20", "output20.png"])
 
-		inp = open(basic)
-		out = open(output_file, "w")
+	if (retcode != 0):
+		print ("Couldn't run the code!")
 
-		# command = executable_path + " < " + basic + " > " + output_file
-		command = [executable_path]
-		proc = subprocess.Popen(command, stdin=inp, stdout=out, stderr=out)
-		timer = Timer(5, proc.kill)
-		try:
-			timer.start()
-			stdout, stderr = proc.communicate()
-		finally:
-			timer.cancel()
-		# print command
-		# retcode = os.system(command)
-		# if (retcode != 0):
-			# print "Could not run the command : " + fullpath
+	grade = int(input("Final Grade: "))
 
+	return grade
 
-class Timeout(Exception):
-	pass
+def iterate_through_folders(folder_path, compiled_path):
+	# folder_path => the folder that contains all the extracted submissions
+	
+	dict = {"goksu": 100}
 
-def handler(signum, frame):
-	print "Signam handler called with signal : " + signum
-	raise Timeout
+	folders = [folder for folder in folder_path.iterdir() if (folder_path / folder).is_dir()]
+	for folder in folders:
+		# print ("folder: " + str(folder))
+		# each folder is a student's assignment
 
-def main():
-	#..../prog1/evaluation/
-	script_path = os.getcwd()
+		# print folder
+		cmake_path = find("CMakeLists*", str(folder))
 
-	#..../prog1/evaluation/compiled
-	compiled_path = join(script_path, "compiled")
-	#..../prog1/evaluation/compiled/studentX/
-	student_folders = [join(compiled_path, file) for file in listdir(compiled_path) if isdir(join(compiled_path, file))]
+		if len(cmake_path) != 1:
+			print ("MULTIPLE OR ZERO CMAKELISTS SOMEHOW!")
+			continue
+		else:
+			readme_path = find("README*", str(folder))
+			if (len(readme_path) != 1):
+				print ("No README file!")
+				continue
+			else:
+				print ("FOUND README file!")
+				print (folder.name)
 
-	input_folder = join(script_path, "inputs/")
-	input_files = input_file_names(input_folder)
+		source_path = Path(cmake_path[0])
 
-	# print basic_input_files
-	# print student_folders[0]
-	# execute_student(briankim, basic_input_files, advcd_input_files)
-	for student in student_folders:
-		print student
-		execute_student(student, input_files)
+		grade = run_submission(source_path.parent, compiled_path)
+		dict[folder.name] = grade
+
+	print (dict)
+	grade_file = compiled_path / "grades.json"
+	with open(grade_file, 'w') as fp:
+		json.dump(dict, fp)
+
+	print("Saved the grades file into: " + str(grade_file))
 
 if __name__ == "__main__":
-	main()
+	if (len(sys.argv) != 2):
+		print("Please give the path as command line argument")
+		print("Exiting...")
+		exit(0)
+
+	folder_path = Path(sys.argv[1])
+	compiled_path = folder_path.parent / "compiled"
+	if ~compiled_path.exists():
+		compiled_path.mkdir(mode=0o777, parents=True, exist_ok=True)
+		print("created the compiled folder: " + str(compiled_path))
+
+	iterate_through_folders(folder_path.resolve(), compiled_path.resolve())
